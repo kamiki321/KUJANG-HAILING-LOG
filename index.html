@@ -82,7 +82,7 @@ const STORAGE_KEY='kri-kujang-hailing-records';
 const OPS_KEY='kri-kujang-ops-list';
 const uid=()=>Math.random().toString(36).slice(2)+Date.now().toString(36);
 let records=[]; let opsList=[]; let selectedOpsId=''; let page='dashboard'; let editingId=null; let viewingId=null; let deletingId=null; let highlightId=null;
-let addingOps=false; let deletingOpsId=null; let pendingImportData=null;
+let addingOps=false; let deletingOpsId=null; let pendingImportData=null; let nominalTargetId=null;
 let filters={q:'',dest:'',cargo:'',type:'',range:'all',opsId:''};
 let sortKey='no', sortDir='asc';
 
@@ -163,6 +163,7 @@ function parseHailing(raw){
 function formatVesselNames(r){ return (r.vessels||[]).map(v=>v.name).join('; ')||'-'; }
 function formatVesselTonnage(r){ return (r.vessels||[]).map(v=> v.gt!=null? 'GT. '+v.gt : 'GT. -').join('; ')||'-'; }
 function totalGT(r){ return (r.vessels||[]).reduce((s,v)=>s+(parseFloat(v.gt)||0),0); }
+function formatRupiah(v){ if(v===null||v===undefined||v==='') return '-'; const n=Math.round(Number(v)||0); return 'Rp ' + n.toLocaleString('id-ID') + ',00'; }
 
 // ---------- CRUD ----------
 function upsertRecord(data, id){
@@ -268,14 +269,18 @@ function filteredRecords(){
 function renderTable(list,full=true){
   if(list.length===0) return `<div style="padding:24px;text-align:center;color:var(--gray);font-size:13px;">Tidak ada data ditemukan.</div>`;
   return `<div class="scrollx"><table><thead><tr>
-    <th>No</th><th>Posisi</th><th>Nama</th><th>Tonase</th><th>Tujuan</th><th>Muatan</th><th>ABK</th><th>Captain</th><th>HP Captain</th><th>Owner</th><th>HP Owner</th><th>PT</th>${full?'<th>Action</th>':''}
+    <th>No</th><th>Posisi</th><th>Nama</th><th>Tonase</th><th>Tujuan</th><th>Muatan</th><th>ABK</th><th>Captain</th><th>HP Captain</th><th>Owner</th><th>HP Owner</th><th>PT</th><th>Transfer</th><th>Nominal</th>${full?'<th>Action</th>':''}
   </tr></thead><tbody>
-  ${list.map((r,i)=>{ const isNew = r.id===highlightId; return `<tr class="${isNew?'row-new':''}" ${isNew?'id="rowHighlight"':''}>
+  ${list.map((r,i)=>{ const isNew = r.id===highlightId; const hasNominal = r.nominal!=null && r.nominal!=='';
+    return `<tr class="${isNew?'row-new':''}" ${isNew?'id="rowHighlight"':''}>
     <td>${r.no??(i+1)}${isNew?' <span class="badge" style="background:var(--gold);color:#2b2205;">BARU</span>':''}</td><td>${r.posisi||'-'}</td><td>${formatVesselNames(r)}</td><td>${formatVesselTonnage(r)}</td>
     <td>${r.destination||'-'}</td><td>${r.cargo||'-'}</td><td>${r.crewCount??'-'}</td><td>${r.captain||'-'}</td>
     <td>${r.captainPhone||'-'}</td><td>${r.owner||'-'}</td><td>${r.ownerPhone||'-'}</td><td>${r.company||'-'}</td>
+    <td>${hasNominal?'<span class="badge" style="background:#16a34a22;color:#16a34a;">Sudah Transfer</span>':'<span class="badge" style="background:#dc262622;color:#dc2626;">Belum Transfer</span>'}</td>
+    <td>${formatRupiah(r.nominal)}</td>
     ${full?`<td style="white-space:nowrap;"><button class="btn btn-outline" style="padding:3px 8px;font-size:11px;" onclick="openView('${r.id}')">View</button>
     <button class="btn btn-outline" style="padding:3px 8px;font-size:11px;" onclick="openEdit('${r.id}')">Edit</button>
+    <button class="btn btn-outline" style="padding:3px 8px;font-size:11px;" onclick="openNominal('${r.id}')">${hasNominal?'Edit Nominal':'Add Nominal'}</button>
     <button class="btn btn-danger" style="padding:3px 8px;font-size:11px;" onclick="openDelete('${r.id}')">Delete</button></td>`:''}
   </tr>`; }).join('')}
   </tbody></table></div>`;
@@ -394,7 +399,8 @@ function attachPageHandlers(){}
 function openView(id){ viewingId=id; renderModal(); }
 function openEdit(id){ editingId=id; renderModal(); }
 function openDelete(id){ deletingId=id; renderModal(); }
-function closeModal(){ viewingId=null; editingId=null; deletingId=null; renderModal(); }
+function openNominal(id){ nominalTargetId=id; renderModal(); }
+function closeModal(){ viewingId=null; editingId=null; deletingId=null; nominalTargetId=null; renderModal(); }
 
 function renderModal(){
   let el=document.getElementById('modalRoot');
@@ -402,6 +408,7 @@ function renderModal(){
   if(viewingId){ const r=records.find(x=>x.id===viewingId); el.innerHTML=viewModalHTML(r); }
   else if(editingId){ const r=records.find(x=>x.id===editingId); el.innerHTML=editModalHTML(r); }
   else if(deletingId){ const r=records.find(x=>x.id===deletingId); el.innerHTML=deleteModalHTML(r); }
+  else if(nominalTargetId){ const r=records.find(x=>x.id===nominalTargetId); el.innerHTML=nominalModalHTML(r); setTimeout(()=>document.getElementById('nominalInput')?.focus(),0); }
   else if(addingOps){ el.innerHTML=addOpsModalHTML(); setTimeout(()=>document.getElementById('newOpsName')?.focus(),0); }
   else if(deletingOpsId){ const o=opsList.find(x=>x.id===deletingOpsId); el.innerHTML=deleteOpsModalHTML(o); }
   else if(pendingImportData){ el.innerHTML=importModeModalHTML(); }
@@ -523,6 +530,33 @@ function deleteModalHTML(r){
   </div></div></div>`;
 }
 function confirmDelete(id){ deleteRecord(id); toast('✓ Data hailing dihapus.'); closeModal(); renderApp(); }
+function nominalModalHTML(r){
+  if(!r) return '';
+  return `<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="card" style="max-width:400px;width:100%;padding:20px;">
+  <div style="font-weight:800;margin-bottom:4px;">${r.nominal!=null?'Edit':'Tambah'} Nominal Transfer</div>
+  <div style="font-size:12px;color:var(--gray);margin-bottom:12px;">${formatVesselNames(r)}</div>
+  <label style="font-size:11px;color:var(--gray);">Nominal (Rp)</label>
+  <input id="nominalInput" type="number" min="0" placeholder="contoh: 500000" value="${r.nominal??''}" style="width:100%;margin-top:4px;" onkeydown="if(event.key==='Enter')confirmNominal('${r.id}')">
+  <div style="text-align:right;margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
+    ${r.nominal!=null?`<button class="btn btn-danger" style="margin-right:auto;" onclick="clearNominal('${r.id}')">Hapus Nominal</button>`:''}
+    <button class="btn btn-outline" onclick="closeModal()">Batal</button>
+    <button class="btn" onclick="confirmNominal('${r.id}')">Simpan</button>
+  </div></div></div>`;
+}
+function confirmNominal(id){
+  const input=document.getElementById('nominalInput');
+  const raw=input?input.value.trim():'';
+  const num=parseInt(raw,10);
+  if(!raw || isNaN(num) || num<0){ toast('⚠ Nominal tidak valid.','warn'); input?.focus(); return; }
+  upsertRecord({ nominal:num }, id);
+  toast('✓ Nominal berhasil ditambahkan.');
+  closeModal(); renderApp();
+}
+function clearNominal(id){
+  upsertRecord({ nominal:null }, id);
+  toast('✓ Nominal dihapus.');
+  closeModal(); renderApp();
+}
 
 // ---------- Export / Import ----------
 async function offerDownload(filename, blob){
